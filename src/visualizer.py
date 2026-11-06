@@ -4,7 +4,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def plot_loss_history(history: Dict[str, List[float]], save_path: str = "loss_curve.png") -> None:
+def plot_loss_history(
+    history: Dict[str, List[float]], save_path: str = "loss_curve.png"
+) -> None:
     plt.figure(figsize=(8, 4.5))
     for key, values in history.items():
         plt.semilogy(values, label=f"Loss: {key}", lw=1.8)
@@ -21,11 +23,11 @@ def plot_loss_history(history: Dict[str, List[float]], save_path: str = "loss_cu
 
 
 def plot_comparison_and_residuals(
-        X: np.ndarray,
-        Y: np.ndarray,
-        true_fields : Dict[str,np.ndarray],
-        pred_fields : Dict[str,np.ndarray],
-        save_path : str = "pinn_evaluation_3x3.png"
+    X: np.ndarray,
+    Y: np.ndarray,
+    true_fields: Dict[str, np.ndarray],
+    pred_fields: Dict[str, np.ndarray],
+    save_path: str = "pinn_evaluation_3x3.png",
 ) -> None:
 
     variables = ["u", "v", "p"]
@@ -48,18 +50,24 @@ def plot_comparison_and_residuals(
         vmin, vmax = np.min(u_true), np.max(u_true)
 
         # 1. Spalte: Ground Truth
-        im0 = axes[row_idx, 0].contourf(X, Y, u_true, levels=30, cmap="viridis", vmin=vmin, vmax=vmax)
+        im0 = axes[row_idx, 0].contourf(
+            X, Y, u_true, levels=30, cmap="viridis", vmin=vmin, vmax=vmax
+        )
         axes[row_idx, 0].set_title(f"Ground Truth: {var}(x,y)")
         fig.colorbar(im0, ax=axes[row_idx, 0])
 
         # 2. Spalte: PINN Prediction
-        im1 = axes[row_idx, 1].contourf(X, Y, u_pred, levels=30, cmap="viridis", vmin=vmin, vmax=vmax)
+        im1 = axes[row_idx, 1].contourf(
+            X, Y, u_pred, levels=30, cmap="viridis", vmin=vmin, vmax=vmax
+        )
         axes[row_idx, 1].set_title(f"PINN Prediction: {var}(x,y)")
         fig.colorbar(im1, ax=axes[row_idx, 1])
 
         # 3. Spalte: Residual / Absoluter Fehler (eigene Farbskala 'magma' oder 'inferno')
         im2 = axes[row_idx, 2].contourf(X, Y, err, levels=30, cmap="inferno")
-        axes[row_idx, 2].set_title(f"Absoluter Fehler |{var}_pred - {var}_true| (Rel. L2: {rel_l2:.2%})")
+        axes[row_idx, 2].set_title(
+            f"Absoluter Fehler |{var}_pred - {var}_true| (Rel. L2: {rel_l2:.2%})"
+        )
         fig.colorbar(im2, ax=axes[row_idx, 2])
 
         for col_idx in range(3):
@@ -72,11 +80,11 @@ def plot_comparison_and_residuals(
 
 
 def plot_3d_comparison(
-        X: np.ndarray,
-        Y: np.ndarray,
-        true_fields: Dict[str, np.ndarray],
-        pred_fields: Dict[str, np.ndarray],
-        save_path: str = "pinn_evaluation_3d.png",
+    X: np.ndarray,
+    Y: np.ndarray,
+    true_fields: Dict[str, np.ndarray],
+    pred_fields: Dict[str, np.ndarray],
+    save_path: str = "pinn_evaluation_3d.png",
 ) -> None:
     """Erzeugt einen 3D-Oberflächenvergleich für die Felder u, v und p."""
     variables = ["u", "v", "p"]
@@ -91,13 +99,21 @@ def plot_3d_comparison(
             pred_field -= np.mean(pred_field)
 
         error = np.abs(pred_field - true_field)
-        rel_l2 = np.linalg.norm(pred_field - true_field) / (np.linalg.norm(true_field) + 1e-12)
+        rel_l2 = np.linalg.norm(pred_field - true_field) / (
+            np.linalg.norm(true_field) + 1e-12
+        )
         vmin, vmax = np.min(true_field), np.max(true_field)
 
         surfaces = (
             (true_field, "viridis", vmin, vmax, f"Ground Truth: {var}(x,y)"),
             (pred_field, "viridis", vmin, vmax, f"PINN Prediction: {var}(x,y)"),
-            (error, "inferno", None, None, f"Absoluter Fehler {var} (Rel. L2: {rel_l2:.2%})"),
+            (
+                error,
+                "inferno",
+                None,
+                None,
+                f"Absoluter Fehler {var} (Rel. L2: {rel_l2:.2%})",
+            ),
         )
 
         for col_idx, (field, cmap, field_min, field_max, title) in enumerate(surfaces):
@@ -153,6 +169,8 @@ def plot_3d_slice_comparison(
         true_2d = {k: v[idx, :, :] for k, v in true_3d.items()}
         pred_2d = {k: v[idx, :, :] for k, v in pred_3d.items()}
     else:
-        raise ValueError(f"Unbekannte Schnittebene: {plane}. Wähle 'xy', 'xz' oder 'yz'.")
+        raise ValueError(
+            f"Unbekannte Schnittebene: {plane}. Wähle 'xy', 'xz' oder 'yz'."
+        )
 
     plot_comparison_and_residuals(X_2d, Y_2d, true_2d, pred_2d, save_path=save_path)

@@ -75,7 +75,7 @@ def load_kovasznay(
 
 
 def get_wake_2d_data(
-    data_dir: str, z_index: int, n_train: int, n_col: int, device: str
+    data_dir: str, z_index: int, n_train: int, n_col: int, device: str, 
 ):
     # 1. HDF5 laden & bei z_index schneiden -> X, Y, u_true, v_true, p_true
     # 2. Zufällige Indizes für train_batch ziehen (n_data Punkte für Data-Loss, n_col für PDE)
@@ -99,15 +99,15 @@ def get_wake_2d_data(
     x_norm, x_min, x_max = normalize_data(x)
     y_norm, y_min, y_max = normalize_data(y)
 
-    x_scale = (x_max - x_min) / 2.0
-    y_scale = (y_max - y_min) / 2.0
+    x_scale = float(2.0 / (x_max - x_min))
+    y_scale = float(2.0 / (y_max - y_min))
 
     X_norm, Y_norm = np.meshgrid(x_norm, y_norm, indexing="ij")  # X, Y (30, 301)
 
     # without transpose it would be (y, x)
     u_true = field[z_index, :, :, 0].T  # u (301, 30)
     v_true = field[z_index, :, :, 1].T  # v (301, 30)
-    p_true = pressure[z_index, :, :].T  # p (301, 30)
+    p_true = np.squeeze(pressure[z_index]).T  # p (301, 30)
 
     x_data = np.random.randint(0, len(x), size=n_train)
     y_data = np.random.randint(0, len(y), size=n_train)

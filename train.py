@@ -25,7 +25,7 @@ if __name__ == "__main__":
         "hidden_dim": 64,
         "num_layers": 4,
         "lr": 1e-3,
-        "epochs": 3000,
+        "epochs": 1,
     }
     # 1.1 Daten laden
     if config["dataset"] == "kovasznay":
@@ -89,6 +89,6 @@ if __name__ == "__main__":
     plot_comparison_and_residuals(
         X, Y, true_dict, pred_dict, save_path="outputs/pinn_evaluation_3x3.png"
     )
-    plot_3d_comparison(
-        X, Y, true_dict, pred_dict, save_path="outputs/pinn_evaluation_3d.png"
-    )
+    # plot_3d_comparison(
+    #    X, Y, true_dict, pred_dict, save_path="outputs/pinn_evaluation_3d.png"
+    # )
