@@ -3,7 +3,7 @@ import torch
 import h5py
 from pathlib import Path
 
-DATA_DIR = Path("..") / "data"
+DATA_DIR = Path("data")
 
 
 def normalize_data(values: np.array) -> np.array:
@@ -63,7 +63,7 @@ def load_kovasznay(
             dtype=torch.float32,
             device=device,
         ),
-        "u_true": torch.tensor(
+        "uvp_true": torch.tensor(
             np.stack([u_true.ravel(), v_true.ravel(), p_true.ravel()], axis=-1),
             dtype=torch.float32,
             device=device,
@@ -90,25 +90,32 @@ def get_wake_2d_data(
             np.asarray(data_file[name]) for name in ("xcoor", "ycoor")
         )  # x, y, z np_arrays (301, 30, 25)      -> 225.750 points
 
+    with h5py.File(DATA_DIR / "meanpressure.h5", "r") as data_file:
+        pressure = np.asarray(data_file["meanpressure_0001"])  # z,y,x (25, 30, 301)
+
     x = coordinates[0].astype(np.float32)  # x (301,)
     y = coordinates[1].astype(np.float32)  # y (30,)
 
     x_norm, x_min, x_max = normalize_data(x)
     y_norm, y_min, y_max = normalize_data(y)
 
+    x_scale = (x_max - x_min) / 2.0
+    y_scale = (y_max - y_min) / 2.0
+
     X_norm, Y_norm = np.meshgrid(x_norm, y_norm, indexing="ij")  # X, Y (30, 301)
 
     # without transpose it would be (y, x)
     u_true = field[z_index, :, :, 0].T  # u (301, 30)
     v_true = field[z_index, :, :, 1].T  # v (301, 30)
+    p_true = pressure[z_index, :, :].T  # p (301, 30)
 
-    x_data = np.random.randint(0, len(x), size=train_n)
-    y_data = np.random.randint(0, len(y), size=train_n)
+    x_data = np.random.randint(0, len(x), size=n_train)
+    y_data = np.random.randint(0, len(y), size=n_train)
 
-    x_col = np.random.randint(0, len(x), size=col_n)
-    y_col = np.random.randint(0, len(y), size=col_n)
+    x_col = np.random.randint(0, len(x), size=n_col)
+    y_col = np.random.randint(0, len(y), size=n_col)
 
-    true_dict = {"u": u_true, "v": v_true}
+    true_dict = {"u": u_true, "v": v_true, "p": p_true}
 
     train_batch = {
         "x_col": torch.tensor(x_norm[x_col], device=device, requires_grad=True).reshape(
@@ -119,11 +126,20 @@ def get_wake_2d_data(
         ),
         "x_data": torch.tensor(x_norm[x_data], device=device).reshape(-1, 1),
         "y_data": torch.tensor(y_norm[y_data], device=device).reshape(-1, 1),
+        # only train on uv data, p is only learned via PDE
         "uv_data": torch.tensor(
-            np.stack([u_true[x_data, y_data], v_true[x_data, y_data]], axis=-1),
+            np.stack(
+                [
+                    u_true[x_data, y_data],
+                    v_true[x_data, y_data],
+                ],
+                axis=-1,
+            ),
             dtype=torch.float32,
             device=device,
         ),
+        "x_scale": x_scale,
+        "y_scale": y_scale,
     }
 
     val_batch = {
@@ -132,8 +148,11 @@ def get_wake_2d_data(
             dtype=torch.float32,
             device=device,
         ),
-        "u_true": torch.tensor(u_true.ravel(), dtype=torch.float32, device=device),
-        "v_true": torch.tensor(v_true.ravel(), dtype=torch.float32, device=device),
+        "uvp_true": torch.tensor(
+            np.stack([u_true.ravel(), v_true.ravel(), p_true.ravel()], axis=-1),
+            dtype=torch.float32,
+            device=device,
+        ),
     }
 
-    return train_batch, val_batch, (X, Y, true_dict)
+    return train_batch, val_batch, (X_norm, Y_norm, true_dict)

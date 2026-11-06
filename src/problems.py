@@ -1,12 +1,14 @@
 from abc import ABC, abstractmethod
 from typing import Dict
-import torch 
+import torch
 import torch.nn as nn
+
 
 class BaseProblem(ABC):
     """Abstrakte Basisklasse: Erzwingt, dass jedes Problem 'compute_loss' implementiert."""
+
     def __init__(self, model: nn.Module) -> None:
-        self.model = model 
+        self.model = model
 
     @abstractmethod
     def compute_loss(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -20,18 +22,55 @@ class NS2DPINN(BaseProblem):
         self.nu = nu
         self.pde_weight = pde_weight
 
-    def _pde_residuals(self, x: torch.Tensor, y: torch.Tensor):
-        out = self.model(torch.cat([x,y], dim = 1))
+    def _pde_residuals(
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        x_scale: float = 1.0,
+        y_scale: float = 1.0,
+    ) -> torch.Tensor:
+        out = self.model(torch.cat([x, y], dim=1))
         u, v, p = out[:, 0:1], out[:, 1:2], out[:, 2:3]
 
-        u_x, u_y = torch.autograd.grad(u, [x, y], grad_outputs=torch.ones_like(u), create_graph=True)
-        v_x, v_y = torch.autograd.grad(v, [x, y], grad_outputs=torch.ones_like(u), create_graph=True)
-        p_x, p_y = torch.autograd.grad(p, [x, y], grad_outputs=torch.ones_like(u), create_graph=True)
+        # calculate gradients, scaled by the spatial scales(from normalization)
 
-        u_xx = torch.autograd.grad(u_x, x, grad_outputs=torch.ones_like(u), create_graph=True)[0]
-        u_yy = torch.autograd.grad(u_y, y, grad_outputs=torch.ones_like(u), create_graph=True)[0]
-        v_xx = torch.autograd.grad(v_x, x, grad_outputs=torch.ones_like(u), create_graph=True)[0]
-        v_yy = torch.autograd.grad(v_y, y, grad_outputs=torch.ones_like(u), create_graph=True)[0]
+        u_x_norm, u_y_norm = torch.autograd.grad(
+            u, [x, y], grad_outputs=torch.ones_like(u), create_graph=True
+        )
+        v_x_norm, v_y_norm = torch.autograd.grad(
+            v, [x, y], grad_outputs=torch.ones_like(u), create_graph=True
+        )
+        p_x_norm, p_y_norm = torch.autograd.grad(
+            p, [x, y], grad_outputs=torch.ones_like(u), create_graph=True
+        )
+
+        u_xx_norm = torch.autograd.grad(
+            u_x_norm, x, grad_outputs=torch.ones_like(u), create_graph=True
+        )[0]
+        u_yy_norm = torch.autograd.grad(
+            u_y_norm, y, grad_outputs=torch.ones_like(u), create_graph=True
+        )[0]
+        v_xx_norm = torch.autograd.grad(
+            v_x_norm, x, grad_outputs=torch.ones_like(u), create_graph=True
+        )[0]
+        v_yy_norm = torch.autograd.grad(
+            v_y_norm, y, grad_outputs=torch.ones_like(u), create_graph=True
+        )[0]
+
+        u_x = x_scale * u_x_norm  # ∂/∂x = 2 / (x_max - x_min) · ∂/∂x_norm
+        u_y = y_scale * u_y_norm  # ∂/∂y = 2 / (y_max - y_min) · ∂/∂y_norm
+
+        v_x = x_scale * v_x_norm
+        v_y = y_scale * v_y_norm
+
+        p_x = x_scale * p_x_norm
+        p_y = y_scale * p_y_norm
+
+        u_xx = x_scale**2 * u_xx_norm
+        u_yy = y_scale**2 * u_yy_norm
+
+        v_xx = x_scale**2 * v_xx_norm
+        v_yy = y_scale**2 * v_yy_norm
 
         res_mom_x = u * u_x + v * u_y + p_x - self.nu * (u_xx + u_yy)
         res_mom_y = u * v_x + v * v_y + p_y - self.nu * (v_xx + v_yy)
@@ -43,11 +82,20 @@ class NS2DPINN(BaseProblem):
         pred_data = self.model(torch.cat([batch["x_data"], batch["y_data"]], dim=1))
         loss_data = torch.mean((pred_data[:, 0:2] - batch["uv_data"]) ** 2)
 
-        res_mx, res_my, res_c = self._pde_residuals(batch["x_col"], batch["y_col"])
-        loss_pde = torch.mean(res_mx ** 2 + res_my ** 2 + res_c ** 2)  
+        res_mx, res_my, res_c = self._pde_residuals(
+            batch["x_col"],
+            batch["y_col"],
+            x_scale=batch["x_scale"],
+            y_scale=batch["y_scale"],
+        )
+        loss_pde = torch.mean(res_mx**2 + res_my**2 + res_c**2)
 
-        total_loss = loss_data + self.pde_weight * loss_pde 
-        return {"total": total_loss , "data": loss_data.detach(), "pde": loss_pde.detach()}
+        total_loss = loss_data + self.pde_weight * loss_pde
+        return {
+            "total": total_loss,
+            "data": loss_data.detach(),
+            "pde": loss_pde.detach(),
+        }
 
     def evaluate(self, val_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         """
@@ -57,7 +105,7 @@ class NS2DPINN(BaseProblem):
 
         self.model.eval()
         preds = self.model(val_batch["coords"])
-        targets = val_batch["u_true"]
+        targets = val_batch["uvp_true"]
 
         metrics = {}
         for idx, name in enumerate(["u", "v", "p"]):
