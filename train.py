@@ -11,7 +11,7 @@ from src.visualizer import (
     plot_comparison_and_residuals,
     plot_loss_history,
 )
-from src.data import load_kovasznay, get_wake_2d_data
+from src.data import WakeData2D
 
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -25,19 +25,19 @@ if __name__ == "__main__":
         "hidden_dim": 64,
         "num_layers": 4,
         "lr": 1e-3,
-        "epochs": 1,
+        "epochs": 1000,
+        "batch_size_col": 256,
+        "batch_size_data": None,  # None = alle Datenpunkte auf einmal verwenden
     }
-    # 1.1 Daten laden
-    if config["dataset"] == "kovasznay":
-        train_batch, val_batch, (X, Y, true_dict) = load_kovasznay(
-            re=config["re"], device=device
+
+    if config["dataset"] == "wake_2d":
+        data = WakeData2D(
+            data_dir="data", device=device, z_index=18, n_train=250, n_col=2500
         )
-    elif config["dataset"] == "wake_2d":
-        train_batch, val_batch, (X, Y, true_dict) = get_wake_2d_data(
-            data_dir="data/wake_2d", z_index=0, n_train=250, n_col=2500, device=device
+        col_loader, data_loader = data.get_loaders(
+            batch_size_col=config["batch_size_col"],
+            batch_size_data=config["batch_size_data"],
         )
-    else:
-        raise ValueError(f"Unbekanntes Dataset: {config['dataset']}")
 
     # 2. Modell, Problem & Trainer zusammenstecken
     model = Pinn2D(
@@ -46,8 +46,12 @@ if __name__ == "__main__":
         hidden_dim=config["hidden_dim"],
         num_layers=config["num_layers"],
     ).to(device)
+
     problem = NS2DPINN(
-        model=model, nu=1.0 / config["re"], pde_weight=config["pde_weight"]
+        model=model,
+        nu=1.0 / config["re"],
+        pde_weight=config["pde_weight"],
+        scales=data.scales,
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"])
 
@@ -60,11 +64,13 @@ if __name__ == "__main__":
 
     # 3. Training starten
     trainer.fit(
-        train_batch=train_batch,
-        val_batch=val_batch,
+        col_loader=col_loader,
+        data_loader=data_loader,
+        test_batch=data.test_batch,
         epochs=config["epochs"],
         log_every=500,
     )
+
     plot_loss_history(trainer.history, save_path="outputs/loss_curve.png")
 
     # 4. Bestes Modell aus Checkpoint wiederherstellen & auf feinem Gitter evaluieren
@@ -72,22 +78,21 @@ if __name__ == "__main__":
     model.eval()
 
     with torch.no_grad():
-        xy_tensor = torch.tensor(
-            np.stack([X.ravel(), Y.ravel()], axis=-1),
-            dtype=torch.float32,
-            device=device,
-        )
-        preds = model(xy_tensor).cpu().numpy()
+        preds = model(data.test_batch["coords"]).cpu().numpy()
 
     pred_dict = {
-        "u": preds[:, 0].reshape(X.shape),
-        "v": preds[:, 1].reshape(X.shape),
-        "p": preds[:, 2].reshape(X.shape),
+        "u": preds[:, 0].reshape(data.X.shape),
+        "v": preds[:, 1].reshape(data.Y.shape),
+        "p": preds[:, 2].reshape(data.X.shape),
     }
 
     # 5. Ground Truth vs. Prediction vs. Residual plotten
     plot_comparison_and_residuals(
-        X, Y, true_dict, pred_dict, save_path="outputs/pinn_evaluation_3x3.png"
+        data.X,
+        data.Y,
+        data.true_dict,
+        pred_dict,
+        save_path="outputs/pinn_evaluation_3x3.png",
     )
     # plot_3d_comparison(
     #    X, Y, true_dict, pred_dict, save_path="outputs/pinn_evaluation_3d.png"
