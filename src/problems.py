@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Dict
 import torch
 import torch.nn as nn
-from physics import NS2D
+from src.physics import NS2D
 
 
 class BaseProblem(ABC):
@@ -45,7 +45,7 @@ class NS2DPINN(BaseProblem):
         pred_data = self.model(coords_data)
         loss_data = torch.mean((pred_data[:, 0:2] - targets_data) ** 2)
 
-        res_mx, res_my, res_c = NS2D(coords_col)
+        res_mx, res_my, res_c = NS2D(self, coords_col)
         loss_pde = torch.mean(res_mx**2 + res_my**2 + res_c**2)
 
         total_loss = loss_data + self.pde_weight * loss_pde
