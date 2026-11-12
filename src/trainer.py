@@ -88,9 +88,9 @@ class Trainer:
             path,
         )
 
-    def load_checkpoint(self, filename: str) -> Dict[str, Any]:
+    def load_checkpoint(self, filename: str, device: str) -> Dict[str, Any]:
         path = self.checkpoint_dir / filename
-        checkpoint = torch.load(path, weights_only=False)
+        checkpoint = torch.load(path, weights_only=False, map_location=device)
         self.problem.model.load_state_dict(checkpoint["model_state_dict"])
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         print(
