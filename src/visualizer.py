@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Dict, List
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import MaxNLocator
 
 
 def plot_loss_history(
@@ -31,7 +32,15 @@ def plot_comparison_and_residuals(
 ) -> None:
 
     variables = ["u", "v", "p"]
-    fig, axes = plt.subplots(3, 3, figsize=(15, 11), constrained_layout=True)
+
+    # Figure-Größe aus dem echten Seitenverhältnis des Gebiets ableiten
+    x_len = float(X.max() - X.min())
+    y_len = float(Y.max() - Y.min())
+    panel_w = 6.0
+    panel_h = panel_w * y_len / x_len + 1.6  # + Platz für Titel, Achse, Colorbar
+    fig, axes = plt.subplots(
+        3, 3, figsize=(3 * panel_w, 3 * panel_h), constrained_layout=True
+    )
 
     for row_idx, var in enumerate(variables):
         u_true = true_fields[var].copy()
@@ -47,32 +56,39 @@ def plot_comparison_and_residuals(
         rel_l2 = np.linalg.norm(u_pred - u_true) / (np.linalg.norm(u_true) + 1e-12)
 
         # Gemeinsame Farbskala für Ground Truth und Prediction erzwingen!
+        # Explizite Levels: sonst rechnet contourf die Stufen aus den eigenen Daten
+        # und vmin/vmax allein erzwingen KEINE gemeinsame Skala.
         vmin, vmax = np.min(u_true), np.max(u_true)
+        levels = np.linspace(vmin, vmax, 31)
 
         # 1. Spalte: Ground Truth
-        im0 = axes[row_idx, 0].contourf(
-            X, Y, u_true, levels=30, cmap="viridis", vmin=vmin, vmax=vmax
-        )
+        im0 = axes[row_idx, 0].contourf(X, Y, u_true, levels=levels, cmap="viridis")
         axes[row_idx, 0].set_title(f"Ground Truth: {var}(x,y)")
-        fig.colorbar(im0, ax=axes[row_idx, 0])
+        cb0 = fig.colorbar(im0, ax=axes[row_idx, 0], location="bottom", shrink=0.8)
+        cb0.locator = MaxNLocator(nbins=5)
+        cb0.update_ticks()
 
-        # 2. Spalte: PINN Prediction
+        # 2. Spalte: PINN Prediction (gleiche Skala, Ausreißer werden mit eingefärbt)
         im1 = axes[row_idx, 1].contourf(
-            X, Y, u_pred, levels=30, cmap="viridis", vmin=vmin, vmax=vmax
+            X, Y, u_pred, levels=levels, cmap="viridis", extend="both"
         )
         axes[row_idx, 1].set_title(f"PINN Prediction: {var}(x,y)")
-        fig.colorbar(im1, ax=axes[row_idx, 1])
+        cb1 = fig.colorbar(im1, ax=axes[row_idx, 1], location="bottom", shrink=0.8)
+        # gleiche Ticks wie Ground Truth (nur die im sichtbaren Bereich)
+        cb1.set_ticks([t for t in cb0.get_ticks() if vmin <= t <= vmax])
 
-        # 3. Spalte: Residual / Absoluter Fehler (eigene Farbskala 'magma' oder 'inferno')
+        # 3. Spalte: Absoluter Fehler (eigene Farbskala)
         im2 = axes[row_idx, 2].contourf(X, Y, err, levels=30, cmap="inferno")
-        axes[row_idx, 2].set_title(
-            f"Absoluter Fehler |{var}_pred - {var}_true| (Rel. L2: {rel_l2:.2%})"
-        )
-        fig.colorbar(im2, ax=axes[row_idx, 2])
+        axes[row_idx, 2].set_title(f"|{var}_pred - {var}_true| (Rel. L2: {rel_l2:.2%})")
+        cb2 = fig.colorbar(im2, ax=axes[row_idx, 2], location="bottom", shrink=0.8)
+        cb2.locator = MaxNLocator(nbins=5)
+        cb2.update_ticks()
 
         for col_idx in range(3):
-            axes[row_idx, col_idx].set_xlabel("x")
-            axes[row_idx, col_idx].set_ylabel("y")
+            ax = axes[row_idx, col_idx]
+            ax.set_aspect("equal")
+            ax.set_xlabel("x")
+            ax.set_ylabel("y")
 
     plt.savefig(save_path, dpi=150)
     print(f"3x3 Evaluierungs-Plot gespeichert unter: '{save_path}'")

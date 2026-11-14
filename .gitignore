@@ -20,3 +20,5 @@ env/
 .ipynb_checkpoints/
 .ruff_cache/
 .pytest_cache/
+
+plan_files/
