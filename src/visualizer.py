@@ -3,6 +3,7 @@ from typing import Dict, List
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import MaxNLocator
+import torch
 
 
 def plot_loss_history(
@@ -92,7 +93,52 @@ def plot_comparison_and_residuals(
 
     plt.savefig(save_path, dpi=150)
     print(f"3x3 Evaluierungs-Plot gespeichert unter: '{save_path}'")
-    plt.show()
+    plt.close(fig)
+
+
+
+def plot_time_slices(model, data, time_indices, device, save_prefix="outputs/pinn_eval"):
+    """Plottet Wahrheit vs. Vorhersage für einzelne Zeitschritte k."""
+    model.eval()
+    shape_2d = data.X[:, :, 0].shape            # (301, 100)
+
+    for k in time_indices:
+        # 1. Normierte Koordinaten der Scheibe k → ins Netz
+        coords_k = np.column_stack([
+            data.X[:, :, k].ravel(),
+            data.Y[:, :, k].ravel(),
+            data.T[:, :, k].ravel(),
+        ])
+        coords_k = torch.tensor(coords_k, dtype=torch.float32, device=device)
+        with torch.no_grad():
+            preds = model(coords_k).cpu().numpy()   # (30_100, 3)
+
+        # 2. Vorhersage zurück in 2D, Wahrheit auf dieselbe Scheibe schneiden
+        pred_k = {name: preds[:, i].reshape(shape_2d)
+                  for i, name in enumerate(["u", "v", "p"])}
+        true_k = {name: field[:, :, k] for name, field in data.true_dict.items()}
+
+        # 3. Physikalische Koordinaten für die Achsen
+        t_sec = data.T_phys[0, 0, k]
+        plot_comparison_and_residuals(
+            data.X_phys[:, :, k], data.Y_phys[:, :, k], true_k, pred_k,
+            save_path=f"{save_prefix}_t{t_sec:05.1f}s.png",
+        )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def plot_3d_comparison(

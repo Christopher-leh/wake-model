@@ -22,3 +22,6 @@ env/
 .pytest_cache/
 
 plan_files/
+
+# Trainingsläufe (Modelle + Plots)
+runs/

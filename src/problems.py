@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Dict
 import torch
 import torch.nn as nn
-from src.physics import NS2D
+from src.physics import NS2D, NS2Dtime
 
 
 class BaseProblem(ABC):
@@ -17,6 +17,7 @@ class BaseProblem(ABC):
         coords_col: torch.Tensor,
         coords_data: torch.Tensor,
         targets_data: torch.Tensor,
+        pde_terms: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
         """Muss ein Dict mit mindestens dem Key 'total' zurückgeben."""
         pass
@@ -39,6 +40,7 @@ class NS2DPINN(BaseProblem):
     def compute_loss(
         self,
         coords_col: torch.Tensor,
+        pde_terms: torch.Tensor,
         coords_data: torch.Tensor,
         targets_data: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
@@ -46,7 +48,7 @@ class NS2DPINN(BaseProblem):
         pred_data = self.model(coords_data)
         loss_data = torch.mean((pred_data[:, 0:2] - targets_data) ** 2)
 
-        res_mx, res_my, res_c = NS2D(coords_col, self.model, self.scales, self.nu)
+        res_mx, res_my, res_c = NS2D( self.model,coords_col,pde_terms, self.scales, self.nu)
         loss_pde = torch.mean(res_mx**2 + res_my**2 + res_c**2)
 
         total_loss = loss_data + self.pde_weight * loss_pde
@@ -103,6 +105,7 @@ class NS2DtimePINN(BaseProblem):
     def compute_loss(
         self,
         coords_col: torch.Tensor,
+        pde_terms: torch.Tensor,
         coords_data: torch.Tensor,
         targets_data: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
@@ -110,7 +113,7 @@ class NS2DtimePINN(BaseProblem):
         pred_data = self.model(coords_data)
         loss_data = torch.mean((pred_data[:, 0:2] - targets_data) ** 2)
 
-        res_mx, res_my, res_c = NS2Dtime(coords_col, self.model, self.scales, self.nu)
+        res_mx, res_my, res_c = NS2Dtime(self.model, coords_col, pde_terms, self.scales, self.nu)
         loss_pde = torch.mean(res_mx**2 + res_my**2 + res_c**2)
 
         total_loss = loss_data + self.pde_weight * loss_pde
@@ -128,17 +131,24 @@ class NS2DtimePINN(BaseProblem):
 
         self.model.eval()
         with torch.no_grad():
-            preds = self.model(test_batch["coords"])
+            chunks = torch.split(test_batch["coords"], 100000, dim=0)
+            preds_list = [self.model(chunk) for chunk in chunks]
+            preds = torch.cat(preds_list, dim=0)
         targets = test_batch["targets"]
+        n_x, n_y, n_t = test_batch["grid_shape"]
 
         metrics = {}
         for idx, name in enumerate(["u", "v", "p"]):
             pred_f = preds[:, idx].clone()
             true_f = targets[:, idx].clone()
-
-            if name == "p":
-                pred_f -= torch.mean(pred_f)
-                true_f -= torch.mean(true_f)
+        # pressure here is a function of time, so we need a different handling
+        # we have to subtract the mean of the pressure at each time step to get the relative error
+        # not the global mean
+            if name == "p": 
+                pred_f = pred_f.reshape(n_t, n_x, n_y) # (3_612_000,) → (301, 100, 120)
+                true_f = true_f.reshape(n_t, n_x, n_y)
+                pred_f -= pred_f.mean(dim=(0, 1), keepdim=True) #mean over x,y, so one mean per timestep t(120)
+                true_f -= true_f.mean(dim=(0, 1), keepdim=True)
 
             l2_err = torch.linalg.norm(pred_f - true_f) / torch.linalg.norm(true_f)
             metrics[f"val_l2_{name}"] = l2_err.item()
