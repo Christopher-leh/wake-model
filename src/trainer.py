@@ -6,6 +6,7 @@ import torch
 from src.problems import BaseProblem
 from itertools import cycle
 from torch.utils.data import DataLoader
+from collections import defaultdict
 
 
 class Trainer:
@@ -37,7 +38,9 @@ class Trainer:
         self.problem.model.train()
 
         for epoch in range(1, epochs + 1):
-            epoch_losses = {"total": 0.0, "data": 0.0, "pde": 0.0}
+            # defaultdict bricht nicht ab bei fehlendem key
+            epoch_losses = defaultdict(float) # float() ergibt 0.0 als standardwert
+            
             num_batches = 0
 
             for (coords_col, pde_terms), (coords_data, targets_data) in zip(
@@ -52,7 +55,7 @@ class Trainer:
                 self.optimizer.step()
 
                 for k, v in losses.items():
-                    epoch_losses[k] += v.item()
+                    epoch_losses[k] += v.item() # hier also auch neue losse ohne defintion oben nutzbar, wegen defaultdict
                 num_batches += 1
 
             for k in epoch_losses:

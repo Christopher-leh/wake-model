@@ -205,6 +205,12 @@ class KovasznayData(BasePINNData):
         )
 
 
+# Referenzgrößen (für entdimensionalisierung)
+L_REF = 126.0  # (Referenzlänge, hier Rotordurchmesser)
+U_REF = 10.0  # (Referenzgeschwindigkeit, hier Windgeschwindigkeit vor der Turbine)
+T_REF = L_REF / U_REF  # (Referenzzeit)
+
+
 # [x,y,t], [u,v,p]
 class WakeData2Dtime(BasePINNData):
     def __init__(
@@ -255,9 +261,24 @@ class WakeData2Dtime(BasePINNData):
         force_pad = np.zeros_like(vel)
         force_pad[:, :, x_force_offset:, :] = force
 
-        x_norm, x_min, x_max = normalize_data(x)
-        y_norm, y_min, y_max = normalize_data(y)
-        t_norm, t_min, t_max = normalize_data(t)
+        # Entdimensionalisierung der Daten
+        x_dim = x / L_REF
+        y_dim = y / L_REF
+        t_dim = t / T_REF
+        vel_dim = vel / U_REF
+        pres_dim = pres / (U_REF**2)
+        force_dim = force_pad / (U_REF**2 / L_REF)
+        visc_dim = visc / (U_REF * L_REF)
+
+        self.ref = {
+            "L_REF": L_REF,
+            "T_REF": T_REF,
+            "U_REF": U_REF,
+        }
+
+        x_norm, x_min, x_max = normalize_data(x_dim)
+        y_norm, y_min, y_max = normalize_data(y_dim)
+        t_norm, t_min, t_max = normalize_data(t_dim)
 
         x_scale = float(2.0 / (x_max - x_min))
         y_scale = float(2.0 / (y_max - y_min))
@@ -273,14 +294,17 @@ class WakeData2Dtime(BasePINNData):
         )  # zum plotten der physikalischen Lösung
 
         # without transpose it would be (y, x)
-        u_true = vel[:, :, :, 0].T  # u (nt, 30, 301).T -> (301, 100, nt)
-        v_true = vel[:, :, :, 1].T  # v (nt, 30, 301).T -> (301, 100, nt)
-        p_true = pres[:, :, :, 0].T  # p (301, 100, nt)
-        force_x = force_pad[:, :, :, 0].T
-        force_y = force_pad[:, :, :, 1].T
-        visc = visc[:, :, :, 0].T
+        u_true = vel_dim[:, :, :, 0].T  # u (nt, 30, 301).T -> (301, 100, nt)
+        v_true = vel_dim[:, :, :, 1].T  # v (nt, 30, 301).T -> (301, 100, nt)
+        p_true = pres_dim[:, :, :, 0].T  # p (301, 100, nt)
+        force_x = force_dim[:, :, :, 0].T
+        force_y = force_dim[:, :, :, 1].T
+        visc = visc_dim[:, :, :, 0].T
 
         self.true_dict = {"u": u_true, "v": v_true, "p": p_true}
+
+        # hier überlegen wie daten gesamplet werden, dass sie auch im wake liegen, vielleicht doch wie lidar daten samplen
+        # dafür noch funktion schreiben die les daten in lidar daten umwandelt. also strahlen ausgehend von gondeln nach vorne
 
         x_data = self.rng.integers(0, len(x), size=self.n_train)
         y_data = self.rng.integers(0, len(y), size=self.n_train)

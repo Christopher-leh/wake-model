@@ -25,12 +25,13 @@ if __name__ == "__main__":
     # 1. Konfiguration & Daten laden
     config = {
         "dataset": "wake_2dtime",  # Oder "wake_2d"
-        "nu": 1.5e-5,
-        "pde_weight": 100.0,
+        "nu": 0.0,  # macht keinen unterschied
+        "pde_weight_imp": 1.0,
+        "pde_weight_cont": 1.0,
         "hidden_dim": 128,
         "num_layers": 4,
         "lr": 1e-3,
-        "epochs": 10,
+        "epochs": 100,
         "batch_size_col": 256,
         "batch_size_data": None,  # None = alle Datenpunkte auf einmal verwenden
         "seed": 42,
@@ -88,14 +89,15 @@ if __name__ == "__main__":
         problem = NS2DPINN(
             model=model,
             nu=config["nu"],
-            pde_weight=config["pde_weight"],
+            pde_weight=config["pde_weight_imp"],
             scales=data.scales,
         )
     elif config["dataset"] == "wake_2dtime":
         problem = NS2DtimePINN(
             model=model,
             nu=config["nu"],
-            pde_weight=config["pde_weight"],
+            pde_weight_imp=config["pde_weight_imp"],
+            pde_weight_cont=config["pde_weight_cont"],
             scales=data.scales,
         )
     optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"])

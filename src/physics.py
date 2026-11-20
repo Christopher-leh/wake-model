@@ -128,8 +128,8 @@ def NS2Dtime(
     v_xx = x_scale**2 * v_xx_norm
     v_yy = y_scale**2 * v_yy_norm
 
-    res_mom_x = u_t + u * u_x + v * u_y + p_x - (nu + nu_t) * (u_xx + u_yy) - f_x #rho bei kraft und pressure wahrscheinlich schon eingerechten, prüfen!
-    res_mom_y = v_t + u * v_x + v * v_y + p_y - (nu + nu_t) * (v_xx + v_yy) - f_y #hier ist nu_t keine konstante mehr, darf also eigentlich nicht rausgezogen werden
+    res_mom_x = u_t + u * u_x + v * u_y + p_x - (nu + nu_t) * (u_xx + u_yy) - f_x #rho bei kraft und pressure wahrscheinlich schon eingerechten, prüfen! ja ist es!
+    res_mom_y = v_t + u * v_x + v * v_y + p_y - (nu + nu_t) * (v_xx + v_yy) - f_y #hier ist nu_t keine konstante mehr, darf also eigentlich nicht rausgezogen werden, macht aber kaum unterschied
     res_cont = u_x + v_y
 
     return res_mom_x, res_mom_y, res_cont
