@@ -6,6 +6,7 @@ import torch
 from src.problems import BaseProblem
 from itertools import cycle
 from torch.utils.data import DataLoader
+from collections import defaultdict
 
 
 class Trainer:
@@ -23,7 +24,6 @@ class Trainer:
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.config = config or {}
-        self.best_loss = float("inf")
         self.history: Dict[str, list] = {"total": [], "data": [], "pde": []}
 
     def fit(
@@ -38,31 +38,29 @@ class Trainer:
         self.problem.model.train()
 
         for epoch in range(1, epochs + 1):
-            epoch_losses = {"total": 0.0, "data": 0.0, "pde": 0.0}
+            # defaultdict bricht nicht ab bei fehlendem key
+            epoch_losses = defaultdict(float) # float() ergibt 0.0 als standardwert
+            
             num_batches = 0
 
-            for (coords_col,), (coords_data, targets_data) in zip(
+            for (coords_col, pde_terms), (coords_data, targets_data) in zip(
                 col_loader, cycle(data_loader)
             ):
 
                 self.optimizer.zero_grad()
                 losses = self.problem.compute_loss(
-                    coords_col, coords_data, targets_data
+                    coords_col, pde_terms, coords_data, targets_data
                 )
                 losses["total"].backward()
                 self.optimizer.step()
 
                 for k, v in losses.items():
-                    epoch_losses[k] += v.item()
+                    epoch_losses[k] += v.item() # hier also auch neue losse ohne defintion oben nutzbar, wegen defaultdict
                 num_batches += 1
 
             for k in epoch_losses:
                 epoch_losses[k] /= num_batches
                 self.history.setdefault(k, []).append(epoch_losses[k])
-
-            if epoch_losses["total"] < self.best_loss:
-                self.best_loss = epoch_losses["total"]
-                self.save_checkpoint("best_model.pt", epoch, self.best_loss)
 
             if epoch % log_every == 0 or epoch == 1 or epoch == epochs:
                 test_msg = ""
