@@ -3,6 +3,7 @@ import torch
 import h5py
 from pathlib import Path
 from torch.utils.data import DataLoader, TensorDataset
+from scipy import ndimage
 
 
 def normalize_data(values: np.array) -> np.array:
@@ -209,6 +210,7 @@ class KovasznayData(BasePINNData):
 L_REF = 126.0  # (Referenzlänge, hier Rotordurchmesser)
 U_REF = 10.0  # (Referenzgeschwindigkeit, hier Windgeschwindigkeit vor der Turbine)
 T_REF = L_REF / U_REF  # (Referenzzeit)
+sampling_near_turbine = True
 
 
 # [x,y,t], [u,v,p]
@@ -306,9 +308,48 @@ class WakeData2Dtime(BasePINNData):
         # hier überlegen wie daten gesamplet werden, dass sie auch im wake liegen, vielleicht doch wie lidar daten samplen
         # dafür noch funktion schreiben die les daten in lidar daten umwandelt. also strahlen ausgehend von gondeln nach vorne
 
-        x_data = self.rng.integers(0, len(x), size=self.n_train)
-        y_data = self.rng.integers(0, len(y), size=self.n_train)
-        t_data = self.rng.integers(0, len(t), size=self.n_train)
+        # maximum der kraft ist standort der turbine
+
+        # Verwende den sample range, um die Datenpunkte zu wählen
+        if sampling_near_turbine:
+            F_mag = (
+                np.mean(force_pad[:, :, :, 0], axis=0) ** 2
+                + np.mean(force_pad[:, :, :, 1], axis=0) ** 2
+            )  # |F| in (y, x), evtl. über t gemittelt
+            mask = F_mag > 0.05 * F_mag.max()  # Schwellwert, z.B. ein paar Prozent
+            labels, n = ndimage.label(mask)  # n sollte 15 sein
+            centers = ndimage.center_of_mass(F_mag, labels, range(1, n + 1))
+
+            cone_angle = np.pi / 8  # Beispiel: 45 Grad Kegelwinkel
+            radius = 50  # Beispiel: Radius des Kegels
+            cone_mask = np.zeros_like(F_mag, dtype=bool)
+            for center in centers:
+                center_y, center_x = int(center[0]), int(center[1])
+                for y_f in range(F_mag.shape[0]):
+                    for x_f in range(F_mag.shape[1]):
+                        dy = center_y - y_f
+                        dx = (
+                            center_x - x_f
+                        )  # Invertiere dx, um die Richtung zu berücksichtigen
+                        distance = np.sqrt(dx**2 + dy**2)
+                        if (
+                            distance <= radius
+                            and np.abs(np.arctan2(dy, dx)) <= cone_angle
+                        ):
+                            cone_mask[y_f, x_f] = True
+            # sample data in cone
+            ys, xs = np.where(cone_mask)
+            idx = np.random.choice(len(xs), size=self.n_train, replace=False)
+            # -> xs[idx], ys[idx]
+            x_data, y_data = xs[idx], ys[idx]
+            t_data = np.random.choice(
+                np.arange(len(t)), size=self.n_train, replace=False
+            )
+
+        else:
+            x_data = self.rng.integers(0, len(x), size=self.n_train)
+            y_data = self.rng.integers(0, len(y), size=self.n_train)
+            t_data = self.rng.integers(0, len(t), size=self.n_train)
 
         x_col = self.rng.integers(0, len(x), size=self.n_col)
         y_col = self.rng.integers(0, len(y), size=self.n_col)
