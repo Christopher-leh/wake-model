@@ -15,16 +15,20 @@ class Trainer:
         self,
         problem: BaseProblem,
         optimizer: torch.optim.Optimizer,
+        scheduler: torch.optim.lr_scheduler._LRScheduler | None = None,
         checkpoint_dir: str = "checkpoints",
         config: Dict[str, Any] | None = None,
     ) -> None:
 
         self.problem = problem
         self.optimizer = optimizer
+        self.scheduler = scheduler
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.config = config or {}
         self.history: Dict[str, list] = {"total": [], "data": [], "pde": []}
+        self.val_history: Dict[str, list] = {"epoch":[]}
+        self.lr_history: list = []
 
     def fit(
         self,
@@ -62,16 +66,22 @@ class Trainer:
                 epoch_losses[k] /= num_batches
                 self.history.setdefault(k, []).append(epoch_losses[k])
 
+            if self.scheduler is not None:
+                self.scheduler.step()
+            lr = self.optimizer.param_groups[0]["lr"]
+            self.lr_history.append(lr)
+
             if epoch % log_every == 0 or epoch == 1 or epoch == epochs:
                 test_msg = ""
-                if test_batch is not None:
-                    test_metrics = self.problem.evaluate(test_batch)
-                    test_msg = " || " + " | ".join(
-                        f"{k}: {v:.2%}" for k, v in test_metrics.items()
-                    )
+            if test_batch is not None:
+                test_metrics = self.problem.evaluate(test_batch)
+                self.val_history["epoch"].append(epoch)
+                for k, v in test_metrics.items():
+                    self.val_history.setdefault(k, []).append(v)
+                test_msg = " || " + " | ".join(f"{k}: {v:.2%}" for k, v in test_metrics.items())
 
-                train_msg = " | ".join(f"{k}: {v:.2e}" for k, v in epoch_losses.items())
-                print(f"Epoch {epoch:04d} | {train_msg}{test_msg}")
+            train_msg = " | ".join(f"{k}: {v:.2e}" for k, v in epoch_losses.items())
+            print(f"Epoch {epoch:04d} | lr: {lr:.1e} | {train_msg}{test_msg}")
 
     def save_checkpoint(self, filename: str, epoch: int, loss: float) -> None:
         path = self.checkpoint_dir / filename
@@ -82,6 +92,7 @@ class Trainer:
                 "optimizer_state_dict": self.optimizer.state_dict(),
                 "loss": loss,
                 "config": self.config,
+                "scheduler_state_dict": self.scheduler.state_dict() if self.scheduler is not None else None,
             },
             path,
         )

@@ -93,12 +93,14 @@ class NS2DtimePINN(BaseProblem):
         self,
         model: nn.Module,
         nu: float,
+        data_weight: float = 1.0,
         pde_weight_imp: float = 1.0,
         pde_weight_cont: float = 1.0,
         scales: tuple[float, float] = (1.0, 1.0, 1.0),
     ) -> None:
         super().__init__(model)
         self.nu = nu
+        self.data_weight = data_weight
         self.pde_weight_imp = pde_weight_imp
         self.pde_weight_cont = pde_weight_cont
         self.scales = scales
@@ -119,7 +121,7 @@ class NS2DtimePINN(BaseProblem):
         loss_pde_imp = torch.mean(res_mx**2 + res_my**2)
         loss_pde_cont = torch.mean(res_c**2)
 
-        total_loss = loss_data + self.pde_weight_imp * loss_pde_imp + self.pde_weight_cont * loss_pde_cont
+        total_loss = self.data_weight * loss_data + self.pde_weight_imp * loss_pde_imp + self.pde_weight_cont * loss_pde_cont
         return {
             "total": total_loss,
             "data": loss_data.detach(),

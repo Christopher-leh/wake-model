@@ -26,18 +26,20 @@ if __name__ == "__main__":
     config = {
         "dataset": "wake_2dtime",  # Oder "wake_2d"
         "nu": 0.0,  # macht keinen unterschied
-        "pde_weight_imp": 1.0,
-        "pde_weight_cont": 1.0,
+        "data_weight": 1.0,
+        "pde_weight_imp": 0.0,
+        "pde_weight_cont": 0.0,
         "hidden_dim": 128,
         "num_layers": 4,
         "lr": 1e-3,
-        "epochs": 100,
-        "batch_size_col": 256,
+        "lr_end": 1e-5,
+        "epochs": 20000,
+        "batch_size_col": 2000,
         "batch_size_data": None,  # None = alle Datenpunkte auf einmal verwenden
         "seed": 42,
         "z_index": 17,
-        "n_train": 1500,
-        "n_col": 2500,
+        "n_train": 5000,
+        "n_col": 10000,
     }
 
     rng = np.random.default_rng(config["seed"])
@@ -101,10 +103,14 @@ if __name__ == "__main__":
             scales=data.scales,
         )
     optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"])
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(
+    optimizer, gamma=(config["lr_end"] / config["lr"]) ** (1 / config["epochs"])
+)
 
     trainer = Trainer(
         problem=problem,
         optimizer=optimizer,
+        scheduler=scheduler,
         checkpoint_dir=run_dir,
         config=config,
     )
@@ -120,7 +126,11 @@ if __name__ == "__main__":
 
     # 4. Finales Modell, Loss-Verlauf und Plots im Run-Ordner speichern
     trainer.save_checkpoint("model.pt", config["epochs"], trainer.history["total"][-1])
-    (run_dir / "history.json").write_text(json.dumps(trainer.history))
+    (run_dir / "history.json").write_text(json.dumps({
+            "train": trainer.history,
+            "val": trainer.val_history,
+            "lr": trainer.lr_history,
+        }))
     plot_loss_history(trainer.history, save_path=run_dir / "loss_curve.png")
     model.eval()
 
