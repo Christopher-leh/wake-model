@@ -69,13 +69,19 @@ class BasePINNData:
         col_dataset = TensorDataset(self.coords_col, self.pde_terms)
         #col_loader = DataLoader(col_dataset, batch_size=batch_size_col, shuffle=True)
         col_loader = DataLoader(
-            col_dataset, sampler=BatchSampler(RandomSampler(col_dataset, generator=self.rng), batch_size=None, drop_last=True)
-        )
+            col_dataset,
+            sampler=BatchSampler(RandomSampler(col_dataset), batch_size_col, drop_last=False),
+            batch_size=None,   
+)
+        
         data_dataset = TensorDataset(self.coords_data, self.targets_data)
         bs_data = batch_size_data or len(data_dataset)
         #data_loader = DataLoader(data_dataset, batch_size=bs_data, shuffle=True)
         data_loader = DataLoader(
-            data_dataset, sampler=BatchSampler(RandomSampler(data_dataset, generator=self.rng), batch_size=None, drop_last=True)
+            data_dataset, 
+            sampler=BatchSampler(RandomSampler(data_dataset), bs_data, drop_last=False),
+            batch_size=None,   
+        )
 
         return col_loader, data_loader
 
