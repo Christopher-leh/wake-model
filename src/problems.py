@@ -113,21 +113,37 @@ class NS2DtimePINN(BaseProblem):
         coords_data: torch.Tensor,
         targets_data: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
+        if self.pde_weight_imp == 0.0 and self.pde_weight_cont == 0.0:
+            pred_data = self.model(coords_data)
 
-        pred_data = self.model(coords_data)
-        loss_data = torch.mean((pred_data[:, 0:2] - targets_data) ** 2)
+            loss_pde_imp = torch.tensor(0.0, device=coords_col.device)
+            loss_pde_cont = torch.tensor(0.0, device=coords_col.device)
+            loss_data = torch.mean((pred_data[:, 0:2] - targets_data) ** 2)
 
-        res_mx, res_my, res_c = NS2Dtime(self.model, coords_col, pde_terms, self.scales, self.nu)
-        loss_pde_imp = torch.mean(res_mx**2 + res_my**2)
-        loss_pde_cont = torch.mean(res_c**2)
+            total_loss = self.data_weight * loss_data
 
-        total_loss = self.data_weight * loss_data + self.pde_weight_imp * loss_pde_imp + self.pde_weight_cont * loss_pde_cont
-        return {
-            "total": total_loss,
-            "data": loss_data.detach(),
-            "pde_imp": loss_pde_imp.detach(),
-            "pde_cont": loss_pde_cont.detach(),
-        }
+            return {
+                "total": total_loss,
+                "data": loss_data.detach(),
+                "pde_imp": loss_pde_imp.detach(),
+                "pde_cont": loss_pde_cont.detach(),
+            }
+        
+        else:
+            pred_data = self.model(coords_data)
+            loss_data = torch.mean((pred_data[:, 0:2] - targets_data) ** 2)
+
+            res_mx, res_my, res_c = NS2Dtime(self.model, coords_col, pde_terms, self.scales, self.nu)
+            loss_pde_imp = torch.mean(res_mx**2 + res_my**2)
+            loss_pde_cont = torch.mean(res_c**2)
+
+            total_loss = self.data_weight * loss_data + self.pde_weight_imp * loss_pde_imp + self.pde_weight_cont * loss_pde_cont
+            return {
+                "total": total_loss,
+                "data": loss_data.detach(),
+                "pde_imp": loss_pde_imp.detach(),
+                "pde_cont": loss_pde_cont.detach(),
+            }
 
     def evaluate(self, test_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         """

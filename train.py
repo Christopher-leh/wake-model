@@ -29,8 +29,8 @@ if __name__ == "__main__":
         "data_weight": 1.0,
         "pde_weight_imp": 1.0,
         "pde_weight_cont": 1.0,
-        "hidden_dim": 256,
-        "num_layers": 5,
+        "hidden_dim": 128,
+        "num_layers": 4,
         "lr": 1e-3,
         "lr_end": 1e-5,
         "epochs": 20000,
@@ -39,7 +39,10 @@ if __name__ == "__main__":
         "seed": 42,
         "z_index": 17,
         "n_train": 5000,
-        "n_col": 30000,
+        "n_col": 20000,
+        "cone_angle": np.pi / 8,  # Beispiel: 45 Grad Kegelwinkel
+        "radius": 50,  # Beispiel: Radius des Kegels (920 m in x und etwa 985 m in y.)
+        "sampling_near_turbine": True,  # Wenn True, werden die Trainingspunkte in der Nähe der Turbine gesampelt, sonst zufällig im gesamten Bereich
     }
 
     rng = np.random.default_rng(config["seed"])
@@ -68,11 +71,14 @@ if __name__ == "__main__":
     elif config["dataset"] == "wake_2dtime":
         data = WakeData2Dtime(
             data_dir="data",
-            device=device,
             z_index=config["z_index"],
             n_train=config["n_train"],
             n_col=config["n_col"],
+            device=device,
             rng=rng,
+            cone_angle=config["cone_angle"],
+            radius=config["radius"],
+            sampling_near_turbine=config["sampling_near_turbine"],
         )
         col_loader, data_loader = data.get_loaders(
             batch_size_col=config["batch_size_col"],

@@ -221,7 +221,6 @@ class KovasznayData(BasePINNData):
 L_REF = 126.0  # (Referenzlänge, hier Rotordurchmesser)
 U_REF = 10.0  # (Referenzgeschwindigkeit, hier Windgeschwindigkeit vor der Turbine)
 T_REF = L_REF / U_REF  # (Referenzzeit)
-sampling_near_turbine = True  # Wenn True, werden die Trainingspunkte in der Nähe der Turbine gesampelt, sonst zufällig im gesamten Bereich
 
 # [x,y,t], [u,v,p]
 class WakeData2Dtime(BasePINNData):
@@ -233,6 +232,9 @@ class WakeData2Dtime(BasePINNData):
         n_col: int,
         device: str = "cpu",
         rng: np.random.Generator | None = None,
+        cone_angle: float = np.pi / 8,  # Beispiel: 45 Grad Kegelwinkel
+        radius: float = 50,  # Beispiel: Radius des Kegels (920 m in x und etwa 985 m in y.)
+        sampling_near_turbine: bool = True,  # Wenn True, werden die Trainingspunkte in der Nähe der Turbine gesampelt, sonst zufällig im gesamten Bereich
     ) -> None:
         super().__init__(device=device, rng=rng)
         self.data_dir = Path(data_dir)
@@ -240,6 +242,9 @@ class WakeData2Dtime(BasePINNData):
         self.n_train = n_train
         self.n_col = n_col
         self.dt = 0.5
+        self.cone_angle = cone_angle
+        self.radius = radius
+        self.sampling_near_turbine = sampling_near_turbine
 
         self._load_data()
 
@@ -320,7 +325,7 @@ class WakeData2Dtime(BasePINNData):
         # maximum der kraft ist standort der turbine
 
         # Verwende den sample range, um die Datenpunkte zu wählen
-        if sampling_near_turbine:
+        if self.sampling_near_turbine:
             F_mag = (
                 np.mean(force_pad[:, :, :, 0], axis=0) ** 2
                 + np.mean(force_pad[:, :, :, 1], axis=0) ** 2
@@ -329,8 +334,7 @@ class WakeData2Dtime(BasePINNData):
             labels, n = ndimage.label(mask)  # n sollte 15 sein
             centers = ndimage.center_of_mass(F_mag, labels, range(1, n + 1))
 
-            cone_angle = np.pi / 8  # Beispiel: 45 Grad Kegelwinkel
-            radius = 50  # Beispiel: Radius des Kegels
+
             cone_mask = np.zeros_like(F_mag, dtype=bool)
             for center in centers:
                 center_y, center_x = int(center[0]), int(center[1])
@@ -342,17 +346,17 @@ class WakeData2Dtime(BasePINNData):
                         )  # Invertiere dx, um die Richtung zu berücksichtigen
                         distance = np.sqrt(dx**2 + dy**2)
                         if (
-                            distance <= radius
-                            and np.abs(np.arctan2(dy, dx)) <= cone_angle
+                            distance <= self.radius
+                            and np.abs(np.arctan2(dy, dx)) <= self.cone_angle
                         ):
                             cone_mask[y_f, x_f] = True
             # sample data in cone
             ys, xs = np.where(cone_mask)
-            idx = np.random.choice(len(xs), size=self.n_train, replace=False)
+            idx = self.rng.choice(len(xs), size=self.n_train, replace=False)
             # -> xs[idx], ys[idx]
             x_data, y_data = xs[idx], ys[idx]
-            t_data = np.random.choice(
-                np.arange(len(t)), size=self.n_train, replace=False
+            t_data = self.rng.choice(
+                np.arange(len(t)), size=self.n_train
             )
 
         else:
