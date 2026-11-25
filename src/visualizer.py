@@ -126,21 +126,6 @@ def plot_time_slices(model, data, time_indices, device, save_prefix="outputs/pin
         )
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def plot_3d_comparison(
     X: np.ndarray,
     Y: np.ndarray,

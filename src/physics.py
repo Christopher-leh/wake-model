@@ -1,4 +1,4 @@
-"""Deine PDE-Formeln (Kovasznay, 2D/3D-RANS, Actuator Disk)."""
+"""PDE-Residuen: stationäres 2D-NS (Mean Flow) und instationäres 2D-NS mit Turbinenkraft."""
 
 import torch
 

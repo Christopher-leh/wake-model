@@ -18,7 +18,12 @@ def normalize_data(values: np.array) -> np.array:
 
 
 class BasePINNData:
-    # dimensionsunabhängige Basisklasse für Daten
+    """Dimensionsunabhängige Basisklasse für Daten.
+
+    Unterklassen setzen in _load_data per _build_tensors die Trainingstensoren
+    und zusätzlich self.val_batch / self.test_batch (per _make_batch).
+    """
+
     def __init__(
         self, device: str = "cpu", rng: np.random.Generator | None = None
     ) -> None:
@@ -26,68 +31,62 @@ class BasePINNData:
         self.scales: tuple[float, ...] = ()
         self.rng = rng or np.random.default_rng()
 
+    def _to_tensor(self, a: np.ndarray) -> torch.Tensor:
+        return torch.tensor(a, dtype=torch.float32, device=self.device)
+
     def _build_tensors(
         self,
-        coords_col: np.ndarray,  # Shape: (N_col, D_in)   -> z.B. (2500, 2) oder (50000, 3)
-        coords_data: np.ndarray,  # Shape: (N_data, D_in)  -> z.B. (250, 2)  oder (5000, 3)
-        targets_data: np.ndarray,  # Shape: (N_data, D_obs) -> z.B. [u, v]    oder [u, v, w]
-        coords_test: np.ndarray,  # Shape: (N_grid, D_in)
-        targets_test: np.ndarray,  # Shape: (N_grid, D_out) -> z.B. [u, v, p] oder [u, v, w, p]
-        pde_terms: np.ndarray,  # Shape: (N_col, D_pde) -> z.B. [f_x, f_y, visc] oder [f_x, f_y, f_z, visc]
+        coords_col: np.ndarray,  # (N_col, D_in)    z.B. [x, y] oder [x, y, t]
+        coords_data: np.ndarray,  # (N_data, D_in)
+        targets_data: np.ndarray,  # (N_data, D_obs)  z.B. [u, v]
+        pde_terms: np.ndarray | None = None,  # (N_col, D_pde) z.B. [f_x, f_y, visc]
     ) -> None:
-        self.coords_col = torch.tensor(
-            coords_col, dtype=torch.float32, device=self.device
-        )
+        self.coords_col = self._to_tensor(coords_col)
         if pde_terms is not None:
-            self.pde_terms = torch.tensor(
-                pde_terms, dtype=torch.float32, device=self.device
-            )
+            self.pde_terms = self._to_tensor(pde_terms)
         else:
-            self.pde_terms = torch.zeros(
-                len(coords_col), 0
-            )  # Placeholder if pde_terms is None
+            # Platzhalter, damit der Loader immer (coords, pde_terms) liefert
+            self.pde_terms = torch.zeros(len(coords_col), 0, device=self.device)
+        self.coords_data = self._to_tensor(coords_data)
+        self.targets_data = self._to_tensor(targets_data)
 
-        self.coords_data = torch.tensor(
-            coords_data, dtype=torch.float32, device=self.device
-        )
-        self.targets_data = torch.tensor(
-            targets_data, dtype=torch.float32, device=self.device
-        )
-
-        self.test_batch = {
-            "coords": torch.tensor(
-                coords_test, dtype=torch.float32, device=self.device
-            ),
-            "targets": torch.tensor(
-                targets_test, dtype=torch.float32, device=self.device
-            ),
+    def _make_batch(
+        self, coords: np.ndarray, targets: np.ndarray, grid_shape: tuple[int, ...]
+    ) -> dict:
+        """Auswertungs-Batch (Validierung/Test) für problem.evaluate.
+        grid_shape: Form des Gitters, z.B. (n_x, n_y) oder (n_x, n_y, n_t)."""
+        return {
+            "coords": self._to_tensor(coords),
+            "targets": self._to_tensor(targets),
+            "grid_shape": grid_shape,
         }
 
     def get_loaders(
         self, batch_size_col: int = 500, batch_size_data: int | None = None
     ) -> tuple[DataLoader, DataLoader]:
-
+        # BatchSampler holt ganze Batches auf einmal per Index -> viel schneller
+        # als einzelne Samples, da alle Tensoren schon auf dem Device liegen
         col_dataset = TensorDataset(self.coords_col, self.pde_terms)
-        #col_loader = DataLoader(col_dataset, batch_size=batch_size_col, shuffle=True)
         col_loader = DataLoader(
             col_dataset,
             sampler=BatchSampler(RandomSampler(col_dataset), batch_size_col, drop_last=False),
-            batch_size=None,   
-)
-        
+            batch_size=None,
+        )
+
         data_dataset = TensorDataset(self.coords_data, self.targets_data)
         bs_data = batch_size_data or len(data_dataset)
-        #data_loader = DataLoader(data_dataset, batch_size=bs_data, shuffle=True)
         data_loader = DataLoader(
-            data_dataset, 
+            data_dataset,
             sampler=BatchSampler(RandomSampler(data_dataset), bs_data, drop_last=False),
-            batch_size=None,   
+            batch_size=None,
         )
 
         return col_loader, data_loader
 
 
 class WakeData2D(BasePINNData):
+    """Zeitlich gemitteltes Feld (Mean Flow), eine z-Ebene. Koordinaten [x, y]."""
+
     def __init__(
         self,
         data_dir: str,
@@ -147,74 +146,16 @@ class WakeData2D(BasePINNData):
             targets_data=np.column_stack(
                 [u_true[x_data, y_data], v_true[x_data, y_data]]
             ),
-            coords_test=np.column_stack([self.X.ravel(), self.Y.ravel()]),
-            targets_test=np.column_stack(
-                [u_true.ravel(), v_true.ravel(), p_true.ravel()]
-            ),
         )
 
-        with h5py.File(self.data_dir / "force.h5", "r") as data_file:
-            force_field = np.asarray(
-                data_file["force_0001"]
-            )  # z,y,x, (u, v, w) (25, 30, 301, 3)
-            x_force = np.asarray(data_file["xcoor"], dtype=np.float32)
-            y_force = np.asarray(data_file["ycoor"], dtype=np.float32)
-
-
-class KovasznayData(BasePINNData):
-    def __init__(
-        self,
-        n_col: int = 2500,
-        n_data: int = 250,
-        nu: float = 1.5e-5,
-        device: str = "cpu",
-        rng: np.random.Generator | None = None,
-    ) -> None:
-        super().__init__(device=device, rng=rng)
-        self.n_col = n_col
-        self.n_data = n_data
-        self.nu = nu
-        self.re = 1.0 / nu
-        self.lam = 0.5 * self.re - np.sqrt(0.25 * (self.re**2) + 4.0 * (np.pi**2))
-        self.scales = (1.0, 1.0)
-
-        self._load_data()
-
-    def _load_data(self) -> None:
-
-        def exact_fn(x: np.ndarray, y: np.ndarray):
-            u = 1.0 - np.exp(self.lam * x) * np.cos(2.0 * np.pi * y)
-            v = (
-                (self.lam / (2.0 * np.pi))
-                * np.exp(self.lam * x)
-                * np.sin(2.0 * np.pi * y)
-            )
-            p = 0.5 * (1.0 - np.exp(2.0 * self.lam * x))
-            return u, v, p
-
-        # Kollokationspunkte im Gebiet + Randpunkte für den Data-Loss
-        x_col = self.rng.uniform(-0.5, 1.0, (self.n_col, 1))
-        y_col = self.rng.uniform(-0.5, 1.5, (self.n_col, 1))
-
-        x_dat = self.rng.uniform(-0.5, 1.0, (self.n_data, 1))
-        y_dat = self.rng.uniform(-0.5, 1.5, (self.n_data, 1))
-        u_dat, v_dat, _ = exact_fn(x_dat, y_dat)
-
-        x_lin = np.linspace(-0.5, 1.0, 120)
-        y_lin = np.linspace(-0.5, 1.5, 120)
-        self.X, self.Y = np.meshgrid(x_lin, y_lin, indexing="ij")
-        u_true, v_true, p_true = exact_fn(self.X, self.Y)
-        self.true_dict = {"u": u_true, "v": v_true, "p": p_true}
-
-        self._build_tensors(
-            coords_col=np.column_stack([x_col, y_col]),
-            coords_data=np.column_stack([x_dat, y_dat]),
-            targets_data=np.column_stack([u_dat, v_dat]),
-            coords_test=np.column_stack([self.X.ravel(), self.Y.ravel()]),
-            targets_test=np.column_stack(
-                [u_true.ravel(), v_true.ravel(), p_true.ravel()]
-            ),
+        # Mean Flow: keine Zeit zum Zurückhalten -> Validierung = Test = ganzes Gitter
+        full_grid = self._make_batch(
+            coords=np.column_stack([self.X.ravel(), self.Y.ravel()]),
+            targets=np.column_stack([u_true.ravel(), v_true.ravel(), p_true.ravel()]),
+            grid_shape=self.X.shape,
         )
+        self.val_batch = full_grid
+        self.test_batch = full_grid
 
 
 # Referenzgrößen (für entdimensionalisierung)
@@ -261,6 +202,15 @@ class WakeData2Dtime(BasePINNData):
                     )  # nur die Ebene self.z_index
         return np.array(snapshots), np.stack(fields)
 
+    def _grid_batch(self, t_ids, u, v, p) -> dict:
+        """Auswertungs-Batch über das ganze x-y-Gitter, nur für die Zeitschritte t_ids."""
+        sl = (slice(None), slice(None), t_ids)
+        return self._make_batch(
+            coords=np.column_stack([self.X[sl].ravel(), self.Y[sl].ravel(), self.T[sl].ravel()]),
+            targets=np.column_stack([u[sl].ravel(), v[sl].ravel(), p[sl].ravel()]),
+            grid_shape=(self.X.shape[0], self.X.shape[1], len(t_ids)),
+        )
+
     def _load_data(self) -> None:
         t_snap, vel = self._load_snapshots("velocity")  # vel: (n_t, y, x, 3)
         t_snap_p, pres = self._load_snapshots("pressure")  # pres: (n_t, y, x, 1)
@@ -271,6 +221,13 @@ class WakeData2Dtime(BasePINNData):
             x = np.asarray(data_file["xcoor"], dtype=np.float32)
             y = np.asarray(data_file["ycoor"], dtype=np.float32)
         t = (t_snap - t_snap[0]) * self.dt
+        n_t = len(t)
+        t_idx = np.arange(n_t)  # Indexe der Zeitschritte, die wir verwenden
+
+        # zwischenschritte auslassen, für validierung und test
+        val_t = t_idx[5::10]  # alle 10 Zeitschritte ab dem 5. für Validierung
+        test_t = t_idx[9::10]  # alle 10 Zeitschritte ab dem 9. für Test
+        train_t = np.setdiff1d(t_idx, np.concatenate([val_t, test_t]))  # Rest für Training
 
         with h5py.File(self.data_dir / "force_t0001.h5", "r") as f:
             x_force = np.asarray(f["xcoor"], dtype=np.float32)
@@ -356,13 +313,13 @@ class WakeData2Dtime(BasePINNData):
             # -> xs[idx], ys[idx]
             x_data, y_data = xs[idx], ys[idx]
             t_data = self.rng.choice(
-                np.arange(len(t)), size=self.n_train
+                train_t, size=self.n_train
             )
 
         else:
             x_data = self.rng.integers(0, len(x), size=self.n_train)
             y_data = self.rng.integers(0, len(y), size=self.n_train)
-            t_data = self.rng.integers(0, len(t), size=self.n_train)
+            t_data = self.rng.choice(train_t, size=self.n_train)
 
         x_col = self.rng.integers(0, len(x), size=self.n_col)
         y_col = self.rng.integers(0, len(y), size=self.n_col)
@@ -376,12 +333,6 @@ class WakeData2Dtime(BasePINNData):
             targets_data=np.column_stack(
                 [u_true[x_data, y_data, t_data], v_true[x_data, y_data, t_data]]
             ),
-            coords_test=np.column_stack(
-                [self.X.ravel(), self.Y.ravel(), self.T.ravel()]
-            ),
-            targets_test=np.column_stack(
-                [u_true.ravel(), v_true.ravel(), p_true.ravel()]
-            ),
             pde_terms=np.column_stack(
                 [
                     force_x[x_col, y_col, t_col],
@@ -391,5 +342,7 @@ class WakeData2Dtime(BasePINNData):
             ),
         )
 
-        # grid shape for pressure mean uniqueness calculation
-        self.test_batch["grid_shape"] = self.X.shape
+        # Validierung (Modellauswahl) und Test (finaler Vergleich) auf zurückgehaltenen Zeitschritten
+        self.val_t, self.test_t, self.train_t = val_t, test_t, train_t
+        self.test_batch = self._grid_batch(test_t, u_true, v_true, p_true)
+        self.val_batch = self._grid_batch(val_t, u_true, v_true, p_true)

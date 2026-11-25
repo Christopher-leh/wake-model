@@ -11,7 +11,6 @@ from src.models import Pinn2D
 from src.problems import NS2DPINN, NS2DtimePINN
 from src.trainer import Trainer
 from src.visualizer import (
-    plot_3d_comparison,
     plot_comparison_and_residuals,
     plot_loss_history,
     plot_time_slices,
@@ -24,11 +23,11 @@ if __name__ == "__main__":
 
     # 1. Konfiguration & Daten laden
     config = {
-        "dataset": "wake_2dtime",  # Oder "wake_2d"
+        "dataset": "wake_2dtime",  # Oder "wake_2d" (Mean Flow)
         "nu": 0.0,  # macht keinen unterschied
         "data_weight": 1.0,
-        "pde_weight_imp": 1.0,
-        "pde_weight_cont": 1.0,
+        "pde_weight_imp": 1.0,  # bei wake_2d: Gewicht des gesamten PDE-Loss
+        "pde_weight_cont": 1.0,  # nur wake_2dtime
         "hidden_dim": 128,
         "num_layers": 4,
         "lr": 1e-3,
@@ -43,6 +42,7 @@ if __name__ == "__main__":
         "cone_angle": np.pi / 8,  # Beispiel: 45 Grad Kegelwinkel
         "radius": 50,  # Beispiel: Radius des Kegels (920 m in x und etwa 985 m in y.)
         "sampling_near_turbine": True,  # Wenn True, werden die Trainingspunkte in der Nähe der Turbine gesampelt, sonst zufällig im gesamten Bereich
+        "monitor": "val_nrmse_uv",  # Validierungsmetrik für das beste Modell
     }
 
     rng = np.random.default_rng(config["seed"])
@@ -55,6 +55,9 @@ if __name__ == "__main__":
     (run_dir / "config.json").write_text(json.dumps(config, indent=2))
     print(f"Ergebnisse werden gespeichert in: {run_dir}")
 
+    # 2. Daten + Problem je nach Datensatz
+    model_kwargs = dict(out_dim=3, hidden_dim=config["hidden_dim"], num_layers=config["num_layers"])
+
     if config["dataset"] == "wake_2d":
         data = WakeData2D(
             data_dir="data",
@@ -64,9 +67,13 @@ if __name__ == "__main__":
             n_col=config["n_col"],
             rng=rng,
         )
-        col_loader, data_loader = data.get_loaders(
-            batch_size_col=config["batch_size_col"],
-            batch_size_data=config["batch_size_data"],
+        model = Pinn2D(in_dim=2, **model_kwargs).to(device)
+        problem = NS2DPINN(
+            model=model,
+            nu=config["nu"],
+            data_weight=config["data_weight"],
+            pde_weight=config["pde_weight_imp"],
+            scales=data.scales,
         )
     elif config["dataset"] == "wake_2dtime":
         data = WakeData2Dtime(
@@ -80,38 +87,27 @@ if __name__ == "__main__":
             radius=config["radius"],
             sampling_near_turbine=config["sampling_near_turbine"],
         )
-        col_loader, data_loader = data.get_loaders(
-            batch_size_col=config["batch_size_col"],
-            batch_size_data=config["batch_size_data"],
-        )
-
-    # 2. Modell, Problem & Trainer zusammenstecken
-    model = Pinn2D(
-        in_dim=data.coords_col.shape[1],
-        out_dim=3,
-        hidden_dim=config["hidden_dim"],
-        num_layers=config["num_layers"],
-    ).to(device)
-
-    if config["dataset"] == "wake_2d":
-        problem = NS2DPINN(
-            model=model,
-            nu=config["nu"],
-            pde_weight=config["pde_weight_imp"],
-            scales=data.scales,
-        )
-    elif config["dataset"] == "wake_2dtime":
+        model = Pinn2D(in_dim=3, **model_kwargs).to(device)
         problem = NS2DtimePINN(
             model=model,
             nu=config["nu"],
+            data_weight=config["data_weight"],
             pde_weight_imp=config["pde_weight_imp"],
             pde_weight_cont=config["pde_weight_cont"],
             scales=data.scales,
         )
+    else:
+        raise ValueError(f"Unbekannter Datensatz: {config['dataset']}")
+
+    col_loader, data_loader = data.get_loaders(
+        batch_size_col=config["batch_size_col"],
+        batch_size_data=config["batch_size_data"],
+    )
+
     optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"])
     scheduler = torch.optim.lr_scheduler.ExponentialLR(
-    optimizer, gamma=(config["lr_end"] / config["lr"]) ** (1 / config["epochs"])
-)
+        optimizer, gamma=(config["lr_end"] / config["lr"]) ** (1 / config["epochs"])
+    )
 
     trainer = Trainer(
         problem=problem,
@@ -121,46 +117,52 @@ if __name__ == "__main__":
         config=config,
     )
 
-    # 3. Training starten
+    # 3. Training starten (Validierung wählt das beste Modell)
     trainer.fit(
         col_loader=col_loader,
         data_loader=data_loader,
-        test_batch=data.test_batch,
+        val_batch=data.val_batch,
         epochs=config["epochs"],
         log_every=100,
+        monitor=config["monitor"],
     )
 
-    # 4. Finales Modell, Loss-Verlauf und Plots im Run-Ordner speichern
+    # 4. Letztes Modell und Verläufe speichern
     trainer.save_checkpoint("model.pt", config["epochs"], trainer.history["total"][-1])
     (run_dir / "history.json").write_text(json.dumps({
-            "train": trainer.history,
-            "val": trainer.val_history,
-            "lr": trainer.lr_history,
-        }))
+        "train": trainer.history,
+        "val": trainer.val_history,
+        "lr": trainer.lr_history,
+    }))
     plot_loss_history(trainer.history, save_path=run_dir / "loss_curve.png")
-    model.eval()
 
+    # 5. Bestes Modell laden und EINMAL auf dem Test-Batch auswerten
+    best = torch.load(run_dir / "best_model.pt", map_location=device, weights_only=False)
+    model.load_state_dict(best["model_state_dict"])
+    model.eval()
+    test_metrics = problem.evaluate(data.test_batch)
+    print("TEST:", {k: f"{v:.2%}" for k, v in test_metrics.items()})
+    (run_dir / "test_metrics.json").write_text(json.dumps({
+        "test_metrics": test_metrics,
+        "best_epoch": best["epoch"],
+        "best_val_metric": trainer.best_metric,
+        "monitor": config["monitor"],
+    }, indent=2))
+
+    # 6. Plots mit dem besten Modell
     if config["dataset"] == "wake_2dtime":
-        n_t = data.X.shape[2]
         plot_time_slices(
             model,
             data,
-            [0, n_t // 2, n_t - 1],
+            [data.train_t[0], data.val_t[0], data.test_t[0]],  # je ein Train-, Val-, Test-Zeitschritt
             device=device,
             save_prefix=run_dir / "pinn_eval",
         )
 
     elif config["dataset"] == "wake_2d":
-        coords_col = data.test_batch["coords"]
         with torch.no_grad():
-            with torch.no_grad():
-                preds = model(data.test_batch["coords"]).cpu().numpy()
-
-            pred_dict = {
-                "u": preds[:, 0].reshape(data.X.shape),
-                "v": preds[:, 1].reshape(data.Y.shape),
-                "p": preds[:, 2].reshape(data.X.shape),
-            }
+            preds = model(data.test_batch["coords"]).cpu().numpy()
+        pred_dict = {name: preds[:, i].reshape(data.X.shape) for i, name in enumerate(["u", "v", "p"])}
 
         plot_comparison_and_residuals(
             data.X_phys,

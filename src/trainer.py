@@ -26,7 +26,7 @@ class Trainer:
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.config = config or {}
-        self.history: Dict[str, list] = {"total": [], "data": [], "pde": []}
+        self.history: Dict[str, list] = {}  # Keys kommen aus compute_loss
         self.val_history: Dict[str, list] = {"epoch":[]}
         self.lr_history: list = []
 
@@ -34,12 +34,15 @@ class Trainer:
         self,
         col_loader: DataLoader,
         data_loader: DataLoader,
-        test_batch: Dict[str, torch.Tensor] | None = None,
+        val_batch: Dict[str, Any] | None = None,
         epochs: int = 100,
         log_every: int = 200,
+        monitor: str = "val_nrmse_uv",
     ) -> None:
+        """monitor: Validierungsmetrik (kleiner = besser), nach der 'best_model.pt' gespeichert wird."""
 
         self.problem.model.train()
+        self.best_metric, self.best_epoch = float("inf"), None
 
         for epoch in range(1, epochs + 1):
             # defaultdict bricht nicht ab bei fehlendem key
@@ -72,16 +75,25 @@ class Trainer:
             self.lr_history.append(lr)
 
             if epoch % log_every == 0 or epoch == 1 or epoch == epochs:
-                test_msg = ""
-                if test_batch is not None:
-                    test_metrics = self.problem.evaluate(test_batch)
+                val_msg = ""
+                if val_batch is not None:
+                    val_metrics = self.problem.evaluate(val_batch)
                     self.val_history["epoch"].append(epoch)
-                    for k, v in test_metrics.items():
+                    for k, v in val_metrics.items():
                         self.val_history.setdefault(k, []).append(v)
-                    test_msg = " || " + " | ".join(f"{k}: {v:.2%}" for k, v in test_metrics.items())
+                    val_msg = " || " + " | ".join(f"{k}: {v:.2%}" for k, v in val_metrics.items())
+
+                    if val_metrics[monitor] < self.best_metric:
+                        self.best_metric = val_metrics[monitor]
+                        self.best_epoch = epoch
+                        self.save_checkpoint("best_model.pt", epoch, epoch_losses["total"])
+                        val_msg += " *"
 
                 train_msg = " | ".join(f"{k}: {v:.2e}" for k, v in epoch_losses.items())
-                print(f"Epoch {epoch:04d} | lr: {lr:.1e} | {train_msg}{test_msg}")
+                print(f"Epoch {epoch:04d} | lr: {lr:.1e} | {train_msg}{val_msg}")
+
+        if self.best_epoch is not None:
+            print(f"Bestes Modell: Epoch {self.best_epoch}, {monitor} = {self.best_metric:.2%}")
 
     def save_checkpoint(self, filename: str, epoch: int, loss: float) -> None:
         path = self.checkpoint_dir / filename
