@@ -1,5 +1,6 @@
 """Die EINE universelle Trainingsschleife inkl. Speichern/Laden."""
 
+import signal
 from pathlib import Path
 from typing import Any, Dict
 import torch
@@ -7,6 +8,13 @@ from src.problems import BaseProblem
 from itertools import cycle
 from torch.utils.data import DataLoader
 from collections import defaultdict
+
+
+def format_metrics(metrics: Dict[str, float], monitor: str) -> str:
+    """Kurze Konsolenausgabe: nur NRMSE pro Feld + Monitor-Wert.
+    Alle Metriken (auch L2) stehen weiterhin vollständig in der History."""
+    fields = " ".join(f"{n} {metrics[f'val_nrmse_{n}']:.1%}" for n in "uvp")
+    return f"nrmse {fields} | {monitor.removeprefix('val_')} {metrics[monitor]:.2%}"
 
 
 class Trainer:
@@ -43,7 +51,30 @@ class Trainer:
 
         self.problem.model.train()
         self.best_metric, self.best_epoch = float("inf"), None
+        self.last_epoch = 0
+        self.stopped_early = False
 
+        # Strg+C: 1x = nach der aktuellen Epoche sauber beenden (Validierung, Speichern, Plots
+        # laufen danach normal weiter), 2x = sofortiger harter Abbruch
+        def request_stop(signum, frame):
+            if self.stopped_early:
+                raise KeyboardInterrupt
+            self.stopped_early = True
+            print("\n[Strg+C] Training wird nach dieser Epoche beendet "
+                  "(nochmal Strg+C = sofortiger Abbruch ohne Speichern)")
+
+        old_handler = signal.signal(signal.SIGINT, request_stop)
+        try:
+            self._fit_loop(col_loader, data_loader, val_batch, epochs, log_every, monitor)
+        finally:
+            signal.signal(signal.SIGINT, old_handler)
+
+        if self.stopped_early:
+            print(f"Training manuell beendet nach Epoch {self.last_epoch}/{epochs}")
+        if self.best_epoch is not None:
+            print(f"Bestes Modell: Epoch {self.best_epoch}, {monitor} = {self.best_metric:.2%}")
+
+    def _fit_loop(self, col_loader, data_loader, val_batch, epochs, log_every, monitor) -> None:
         for epoch in range(1, epochs + 1):
             # defaultdict bricht nicht ab bei fehlendem key
             epoch_losses = defaultdict(float) # float() ergibt 0.0 als standardwert
@@ -73,15 +104,17 @@ class Trainer:
                 self.scheduler.step()
             lr = self.optimizer.param_groups[0]["lr"]
             self.lr_history.append(lr)
+            self.last_epoch = epoch
 
-            if epoch % log_every == 0 or epoch == 1 or epoch == epochs:
+            # bei manuellem Stopp diese letzte Epoche noch validieren, damit nichts verloren geht
+            if epoch % log_every == 0 or epoch == 1 or epoch == epochs or self.stopped_early:
                 val_msg = ""
                 if val_batch is not None:
                     val_metrics = self.problem.evaluate(val_batch)
                     self.val_history["epoch"].append(epoch)
                     for k, v in val_metrics.items():
                         self.val_history.setdefault(k, []).append(v)
-                    val_msg = " || " + " | ".join(f"{k}: {v:.2%}" for k, v in val_metrics.items())
+                    val_msg = " || val " + format_metrics(val_metrics, monitor)
 
                     if val_metrics[monitor] < self.best_metric:
                         self.best_metric = val_metrics[monitor]
@@ -89,11 +122,11 @@ class Trainer:
                         self.save_checkpoint("best_model.pt", epoch, epoch_losses["total"])
                         val_msg += " *"
 
-                train_msg = " | ".join(f"{k}: {v:.2e}" for k, v in epoch_losses.items())
-                print(f"Epoch {epoch:04d} | lr: {lr:.1e} | {train_msg}{val_msg}")
+                train_msg = " ".join(f"{k} {v:.1e}" for k, v in epoch_losses.items())
+                print(f"Ep {epoch:5d} | lr {lr:.0e} | {train_msg}{val_msg}")
 
-        if self.best_epoch is not None:
-            print(f"Bestes Modell: Epoch {self.best_epoch}, {monitor} = {self.best_metric:.2%}")
+            if self.stopped_early:
+                break
 
     def save_checkpoint(self, filename: str, epoch: int, loss: float) -> None:
         path = self.checkpoint_dir / filename

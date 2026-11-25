@@ -217,12 +217,23 @@ class WakeData2Dtime(BasePINNData):
         t_snap_f, force = self._load_snapshots("force")
         t_snap_visc, visc = self._load_snapshots("sgsviscosity")
 
+
+
         with h5py.File(self.data_dir / "velocity_t0001.h5", "r") as data_file:
             x = np.asarray(data_file["xcoor"], dtype=np.float32)
             y = np.asarray(data_file["ycoor"], dtype=np.float32)
         t = (t_snap - t_snap[0]) * self.dt
         n_t = len(t)
         t_idx = np.arange(n_t)  # Indexe der Zeitschritte, die wir verwenden
+
+         # gauß filter um kleine turbulenzen zu glätten
+        dx, dy = np.diff(x).mean(), np.diff(y).mean()
+        sig_m = 20.0  # gewünschte Glättung in Metern
+        sigma = (0, sig_m / dy, sig_m / dx, 0)
+        vel = ndimage.gaussian_filter(vel, sigma=sigma)  # nur in x,y glätten
+        pres = ndimage.gaussian_filter(pres, sigma=sigma)  # nur in x,y glätten
+        visc = ndimage.gaussian_filter(visc, sigma=sigma)  # nur in x,y glätten
+        force = ndimage.gaussian_filter(force, sigma=sigma)  # nur in x,y glätten
 
         # zwischenschritte auslassen, für validierung und test
         val_t = t_idx[5::10]  # alle 10 Zeitschritte ab dem 5. für Validierung
@@ -289,6 +300,7 @@ class WakeData2Dtime(BasePINNData):
             )  # |F| in (y, x), evtl. über t gemittelt
             mask = F_mag > 0.05 * F_mag.max()  # Schwellwert, z.B. ein paar Prozent
             labels, n = ndimage.label(mask)  # n sollte 15 sein
+            assert n == 15, f"Erwartet 15 Turbinen, gefunden {n}."
             centers = ndimage.center_of_mass(F_mag, labels, range(1, n + 1))
 
 
@@ -316,14 +328,23 @@ class WakeData2Dtime(BasePINNData):
                 train_t, size=self.n_train
             )
 
+            # sample collocation points also around turbine
+            rotor = ndimage.binary_dilation(mask, iterations = 3)  # erweitere die Maske um die Turbine herum
+            ys_r , xs_r = np.where(rotor)
+            n_rot = int(0.2 * self.n_col)  # 20% der Punkte in der Nähe der Turbine
+            i = self.rng.integers(0, len(xs_r), size=n_rot)
+            x_col = np.concatenate([self.rng.integers(0, len(x), size=self.n_col - n_rot), xs_r[i]])
+            y_col = np.concatenate([self.rng.integers(0, len(y), size=self.n_col - n_rot), ys_r[i]])
+            t_col = self.rng.choice(train_t, size=self.n_col)
+
         else:
             x_data = self.rng.integers(0, len(x), size=self.n_train)
             y_data = self.rng.integers(0, len(y), size=self.n_train)
             t_data = self.rng.choice(train_t, size=self.n_train)
 
-        x_col = self.rng.integers(0, len(x), size=self.n_col)
-        y_col = self.rng.integers(0, len(y), size=self.n_col)
-        t_col = self.rng.integers(0, len(t), size=self.n_col)
+            x_col = self.rng.integers(0, len(x), size=self.n_col)
+            y_col = self.rng.integers(0, len(y), size=self.n_col)
+            t_col = self.rng.choice(train_t, size=self.n_col)
 
         self._build_tensors(
             coords_col=np.column_stack([x_norm[x_col], y_norm[y_col], t_norm[t_col]]),

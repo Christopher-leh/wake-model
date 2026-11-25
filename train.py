@@ -29,16 +29,16 @@ if __name__ == "__main__":
         "pde_weight_imp": 1.0,  # bei wake_2d: Gewicht des gesamten PDE-Loss
         "pde_weight_cont": 1.0,  # nur wake_2dtime
         "hidden_dim": 128,
-        "num_layers": 4,
+        "num_layers": 8,
         "lr": 1e-3,
         "lr_end": 1e-5,
         "epochs": 20000,
-        "batch_size_col": 2000,
+        "batch_size_col": 4000,
         "batch_size_data": None,  # None = alle Datenpunkte auf einmal verwenden
         "seed": 42,
         "z_index": 17,
         "n_train": 5000,
-        "n_col": 20000,
+        "n_col": 100000,
         "cone_angle": np.pi / 8,  # Beispiel: 45 Grad Kegelwinkel
         "radius": 50,  # Beispiel: Radius des Kegels (920 m in x und etwa 985 m in y.)
         "sampling_near_turbine": True,  # Wenn True, werden die Trainingspunkte in der Nähe der Turbine gesampelt, sonst zufällig im gesamten Bereich
@@ -128,11 +128,13 @@ if __name__ == "__main__":
     )
 
     # 4. Letztes Modell und Verläufe speichern
-    trainer.save_checkpoint("model.pt", config["epochs"], trainer.history["total"][-1])
+    trainer.save_checkpoint("model.pt", trainer.last_epoch, trainer.history["total"][-1])
     (run_dir / "history.json").write_text(json.dumps({
         "train": trainer.history,
         "val": trainer.val_history,
         "lr": trainer.lr_history,
+        "last_epoch": trainer.last_epoch,
+        "stopped_early": trainer.stopped_early,
     }))
     plot_loss_history(trainer.history, save_path=run_dir / "loss_curve.png")
 
@@ -141,7 +143,9 @@ if __name__ == "__main__":
     model.load_state_dict(best["model_state_dict"])
     model.eval()
     test_metrics = problem.evaluate(data.test_batch)
-    print("TEST:", {k: f"{v:.2%}" for k, v in test_metrics.items()})
+    print(f"\nTEST (bestes Modell, Epoch {best['epoch']}):")
+    for kind in ["nrmse", "l2"]:
+        print(f"  {kind:5s} " + "  ".join(f"{n} {test_metrics[f'val_{kind}_{n}']:.2%}" for n in "uvp"))
     (run_dir / "test_metrics.json").write_text(json.dumps({
         "test_metrics": test_metrics,
         "best_epoch": best["epoch"],
@@ -154,7 +158,7 @@ if __name__ == "__main__":
         plot_time_slices(
             model,
             data,
-            [data.train_t[0], data.val_t[0], data.test_t[0]],  # je ein Train-, Val-, Test-Zeitschritt
+            [data.train_t[0], data.val_t[2], data.test_t[4]],  # je ein Train-, Val-, Test-Zeitschritt
             device=device,
             save_prefix=run_dir / "pinn_eval",
         )
