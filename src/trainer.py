@@ -73,15 +73,15 @@ class Trainer:
 
             if epoch % log_every == 0 or epoch == 1 or epoch == epochs:
                 test_msg = ""
-            if test_batch is not None:
-                test_metrics = self.problem.evaluate(test_batch)
-                self.val_history["epoch"].append(epoch)
-                for k, v in test_metrics.items():
-                    self.val_history.setdefault(k, []).append(v)
-                test_msg = " || " + " | ".join(f"{k}: {v:.2%}" for k, v in test_metrics.items())
+                if test_batch is not None:
+                    test_metrics = self.problem.evaluate(test_batch)
+                    self.val_history["epoch"].append(epoch)
+                    for k, v in test_metrics.items():
+                        self.val_history.setdefault(k, []).append(v)
+                    test_msg = " || " + " | ".join(f"{k}: {v:.2%}" for k, v in test_metrics.items())
 
-            train_msg = " | ".join(f"{k}: {v:.2e}" for k, v in epoch_losses.items())
-            print(f"Epoch {epoch:04d} | lr: {lr:.1e} | {train_msg}{test_msg}")
+                train_msg = " | ".join(f"{k}: {v:.2e}" for k, v in epoch_losses.items())
+                print(f"Epoch {epoch:04d} | lr: {lr:.1e} | {train_msg}{test_msg}")
 
     def save_checkpoint(self, filename: str, epoch: int, loss: float) -> None:
         path = self.checkpoint_dir / filename

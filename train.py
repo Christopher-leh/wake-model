@@ -27,10 +27,10 @@ if __name__ == "__main__":
         "dataset": "wake_2dtime",  # Oder "wake_2d"
         "nu": 0.0,  # macht keinen unterschied
         "data_weight": 1.0,
-        "pde_weight_imp": 0.0,
-        "pde_weight_cont": 0.0,
-        "hidden_dim": 128,
-        "num_layers": 4,
+        "pde_weight_imp": 1.0,
+        "pde_weight_cont": 1.0,
+        "hidden_dim": 256,
+        "num_layers": 5,
         "lr": 1e-3,
         "lr_end": 1e-5,
         "epochs": 20000,
@@ -39,7 +39,7 @@ if __name__ == "__main__":
         "seed": 42,
         "z_index": 17,
         "n_train": 5000,
-        "n_col": 10000,
+        "n_col": 30000,
     }
 
     rng = np.random.default_rng(config["seed"])
